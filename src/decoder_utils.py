@@ -1,57 +1,76 @@
-import torch
+import csv
 import logging
-import logging_cofig
-
-from datasets import load_dataset
+import os
+from dataclasses import dataclass
 from typing import List, Literal
+
+import numpy as np
+import torch
+from datasets import load_dataset
+from tqdm import tqdm
+from transformers import AutoModelForCausalLM
 
 from text_utils import find_index_of_incongruent_word
 from tokenizer_utils import load_tokenizer, tokenize
-from transformers import AutoModelForCausalLM
 
 logger = logging.getLogger(__name__)
 
 AggT = Literal["offset", "onset", "mean", "sum"]
 
+@dataclass
+class ModelConfig:
+    model_name_or_path: str
+    instruct: bool
+
 @torch.no_grad()
 def _extract_word_hidden_states(
     texts: List[str],
-    model_name: str = "gpt2",
+    model_config: ModelConfig,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    fp16: bool = False,
+    batch_size: int = 1,
 ) -> list:
 
-    tok = load_tokenizer(model_name)
-
-    model = AutoModelForCausalLM.from_pretrained(model_name)
+    tokenizer = load_tokenizer(model_config.model_name_or_path)
+    model = AutoModelForCausalLM.from_pretrained(model_config.model_name_or_path)
     model.eval().to(device)
-    if fp16 and device == "cuda":
-        model = model.half()
-
-    encoded_tokens = tokenize(tokenizer=tok, sentences=texts)
-
-    encoded_tokens["input_ids"] = encoded_tokens["input_ids"].to(device)
-    encoded_tokens["attention_mask"] = encoded_tokens["attention_mask"].to(device)
-
-    with torch.inference_mode():
-        output = model(input_ids=encoded_tokens["input_ids"],
-                       attention_mask=encoded_tokens["attention_mask"],
-                       output_hidden_states=True,
-                       use_cache=False)
-
-    hidden_states = torch.stack(output.hidden_states, dim=1)
-    hidden_states = hidden_states.permute(0, 2, 1, 3)
-    hidden_states = [hidden_states[j] for j in range(hidden_states.size(0))]
 
     results = []
-    for t, hs, off_map in zip(texts, hidden_states, encoded_tokens["offset_mapping"]):
-        results.append(dict({
-            "text": t,
-            "hidden_states": hs.cpu().detach(),
-            "offset_mapping": off_map,
-        }))
+
+    for batch_start in range(0, len(texts), batch_size):
+
+        batch = texts[batch_start: batch_start + batch_size]
+
+        encoded_tokens = tokenize(
+            tokenizer=tokenizer,
+            sentences=batch,
+            use_chat_template=model_config.instruct,
+        )
+
+        encoded_tokens["input_ids"] = encoded_tokens["input_ids"].to(device)
+        encoded_tokens["attention_mask"] = encoded_tokens["attention_mask"].to(device)
+
+        with torch.inference_mode():
+            output = model(
+                input_ids=encoded_tokens["input_ids"],
+                attention_mask=encoded_tokens["attention_mask"],
+                output_hidden_states=True,
+                use_cache=False,
+            )
+
+        # [batch, layers, tokens, dim] -> [batch, tokens, layers, dim]
+        hidden_states = torch.stack(output.hidden_states, dim=1).permute(0, 2, 1, 3)
+
+        for text, hs, offsets in zip(batch, hidden_states, encoded_tokens["offset_mapping"]):
+            results.append({
+                "text": text,
+                "hidden_states": hs.cpu().detach(),
+                "offset_mapping": offsets,
+            })
+
+        logger.info(f"Processed batch {batch_start // batch_size + 1}/{(len(texts) - 1)//batch_size + 1}")
 
     return results
+
 
 
 def calculate_aggregated_hidden_states(
@@ -59,7 +78,6 @@ def calculate_aggregated_hidden_states(
     incongruent_sentences: list[str],
     model_name: str = "openai-community/gpt2",
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    fp16: bool = False,
     aggregation_method: AggT = "mean",
 ) -> list:
 
@@ -93,7 +111,94 @@ def calculate_aggregated_hidden_states(
 
     return outputs
 
+
+
+def calculate_hidden_states_all_tokens(
+    tokenizer,
+    model,
+    congruent_sentences: list[str],
+    incongruent_sentences: list[str],
+    model_config: ModelConfig,
+    save_dir: str = "./results",
+    device: str = "cuda" if torch.cuda.is_available() else "cpu",
+    batch_size: int = 1,
+):
+    os.makedirs(save_dir, exist_ok=True)
+    csv_path = os.path.join(save_dir, "results.csv")
+
+    processed_texts = set()
+    if os.path.exists(csv_path):
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                processed_texts.add(row["sentence"])
+    else:
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["sentence", "model", "instruct", "hidden_states_path"])
+
+    remaining_sentences = [s for s in incongruent_sentences if s not in processed_texts]
+    if not remaining_sentences:
+        logger.info("All sentences processed. Skipping all sentences")
+        return csv_path
+
+    logger.info(f"Processing {len(remaining_sentences)} new sentences "
+                f"for model {model_config.model_name_or_path}")
+
+
+    for batch_start in range(0, len(remaining_sentences), batch_size):
+        batch = remaining_sentences[batch_start: batch_start + batch_size]
+
+        encoded_tokens = tokenize(
+            tokenizer=tokenizer,
+            sentences=batch,
+            use_chat_template=model_config.instruct,
+        )
+
+        encoded_tokens["input_ids"] = encoded_tokens["input_ids"].to(device)
+        encoded_tokens["attention_mask"] = encoded_tokens["attention_mask"].to(device)
+
+        with torch.inference_mode():
+            output = model(
+                input_ids=encoded_tokens["input_ids"],
+                attention_mask=encoded_tokens["attention_mask"],
+                output_hidden_states=True,
+                use_cache=False,
+            )
+
+        hidden_states = torch.stack(output.hidden_states, dim=1).permute(0, 2, 1, 3)
+
+        for idx, (text, hs) in enumerate(zip(batch, hidden_states)):
+            sentence_idx = len(processed_texts) + batch_start + idx
+            base_name = f"{sentence_idx:05d}_{model_config.model_name_or_path.replace('/', '_')}.npy"
+            hs_path = os.path.join(save_dir, base_name)
+            np.save(hs_path, hs.cpu().numpy())
+
+            with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([text, model_config.model_name_or_path, model_config.instruct, hs_path])
+
+        logger.info(f"Batch processed {batch_start // batch_size + 1} "
+                    f"of {(len(remaining_sentences) - 1) // batch_size + 1}")
+
+    logger.info(f"Done. All results saved in {save_dir}")
+    return csv_path
+
+
 if __name__ == "__main__":
+
+    aggregate_tokens = False
+
+    model_list = [
+        # ModelConfig(model_name_or_path="RefalMachine/RuadaptQwen3-4B-Instruct", instruct=True),
+        # ModelConfig(model_name_or_path="Qwen/Qwen3-4B-Instruct-2507", instruct=True),
+        # ModelConfig(model_name_or_path="RefalMachine/RuadaptQwen2.5-14B-Instruct", instruct=True),
+        # ModelConfig(model_name_or_path="meta-llama/Meta-Llama-3-8B", instruct=False),
+        # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B", instruct=False),
+        # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B-Instruct", instruct=True),
+        # ModelConfig(model_name_or_path="RefalMachine/ruadapt_qwen2.5_7B_ext_u48_instruct", instruct=True),
+        ModelConfig(model_name_or_path="mistralai/Mistral-7B-v0.1", instruct=False),
+    ]
 
     ds = load_dataset("ContributorsSIGNAL/SIGNAL")
     df = ds["train"].to_pandas()
@@ -103,13 +208,19 @@ if __name__ == "__main__":
     congruent_sentences = df["congruent"].tolist()
     incongruent_sentences = df["sentence"].tolist()
 
-    outputs = calculate_aggregated_hidden_states(
-        congruent_sentences=congruent_sentences,
-        incongruent_sentences=incongruent_sentences,
-        model_name="openai-community/gpt2",
-        device="mps",
-        fp16=False,
-        aggregation_method="mean",
-    )
+    for model_cfg in tqdm(model_list, desc="Model"):
 
-    logger.info(outputs)
+        tokenizer = load_tokenizer(model_cfg.model_name_or_path)
+        model = AutoModelForCausalLM.from_pretrained(model_cfg.model_name_or_path, output_hidden_states=True)
+        model.eval().to("cpu")
+
+        calculate_hidden_states_all_tokens(
+            tokenizer,
+            model,
+            congruent_sentences=congruent_sentences,
+            incongruent_sentences=incongruent_sentences,
+            model_config=model_cfg,
+            save_dir=f"./results/{model_cfg.model_name_or_path.replace('/', '_')}",
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            batch_size=600,
+        )
