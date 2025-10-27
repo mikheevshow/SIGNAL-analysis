@@ -197,7 +197,8 @@ if __name__ == "__main__":
         # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B", instruct=False),
         # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B-Instruct", instruct=True),
         # ModelConfig(model_name_or_path="RefalMachine/ruadapt_qwen2.5_7B_ext_u48_instruct", instruct=True),
-        ModelConfig(model_name_or_path="mistralai/Mistral-7B-v0.1", instruct=False),
+        # ModelConfig(model_name_or_path="mistralai/Mistral-7B-v0.1", instruct=False),
+        # ModelConfig(model_name_or_path="mistralai/Mistral-7B-Instruct-v0.1", instruct=True),
     ]
 
     ds = load_dataset("ContributorsSIGNAL/SIGNAL")

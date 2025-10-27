@@ -25,3 +25,7 @@
 | RefalMachine/RuadaptQwen2.5-7B-Instruct  | 4B         | 36     |                                                                 | да                        | да                |
 | Qwen/Qwen3-4B                            | 4B         | 36     | https://huggingface.co/Qwen/Qwen3-4B                            |                           | да                |
 | t-tech/T-pro-it-2.0-FP8                  | -          | -      | https://huggingface.co/t-tech/T-pro-it-2.0-FP8                  | да                        |                   | 
+
+### Hiddens
+
+https://huggingface.co/collections/mikheevshow/signal-hiddens

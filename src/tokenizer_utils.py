@@ -40,15 +40,38 @@ def tokenize(
             )
             for messages in messages_list
         ]
+
+        print(texts)
+
+        return tokenizer(
+            texts,
+            return_tensors="pt",
+            padding="longest",
+            truncation=True,
+            max_length=max_length,
+            add_special_tokens=False,
+        )
+
     else:
         texts = sentences
 
-    return tokenizer(
-        texts,
-        return_tensors="pt",
-        return_offsets_mapping=True,
-        add_special_tokens=True,
-        padding="longest",
-        truncation=True,
-        max_length=max_length,
-    )
+        return tokenizer(
+            texts,
+            return_tensors="pt",
+            return_offsets_mapping=True,
+            padding="longest",
+            truncation=True,
+            max_length=max_length,
+            add_special_tokens=True,
+        )
+
+
+if __name__ == "__main__":
+
+    tokenizer = load_tokenizer("mistralai/Mistral-7B-v0.1")
+
+    print(tokenize(
+        tokenizer,
+        sentences=["Как дела"],
+        use_chat_template=False,
+    ))

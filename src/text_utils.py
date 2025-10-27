@@ -8,12 +8,12 @@ def define_incongruent_word_start_index(congruent_sentence: str, incongruent_sen
     split_incongruent = incongruent_sentence.split()
     for w1, w2 in zip(split_congruent, split_incongruent):
         if w1.lower() != w2.lower():
-            logger.debug("Searching for incongruent word: {}", w2)
+            logger.debug("Searching for incongruent word: %s", w2)
             a = re.search(w2, incongruent_sentence)
             if a is None:
                 raise ValueError(f"Sentences: {congruent_sentence}, Sentences: {incongruent_sentence}")
             return [a.start(), a.end()]
-    logger.debug("Sentences are equal, both are: {}", congruent_sentence)
+    logger.debug("Sentences are equal, both are: %s", congruent_sentence)
     return [-1, -1]
 
 
