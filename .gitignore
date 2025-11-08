@@ -5,6 +5,8 @@ hf_datasets
 hf_old_datasets
 epochs_eeg_aligned
 
+erp_data.npy
+
 ### JupyterNotebooks ###
 # gitignore template for Jupyter Notebooks
 # website: http://jupyter.org/

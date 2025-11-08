@@ -142,3 +142,27 @@ def average_over_subjects_with_info(data: np.ndarray) -> tuple[np.ndarray, np.nd
     erp_data = np.nanmean(data, axis=0)
 
     return erp_data, subject_counts
+
+
+if __name__ == "__main__":
+
+    stimuli_df = pd.read_csv("../hf_datasets/stimuli.csv")
+
+    print(f"Total number of stimuli: {len(stimuli_df)}")
+
+
+    print(stimuli_df.shape)
+    eeg_all_sentences = get_eeg_for_all_sentences(
+        sentences=stimuli_df["sentence"],
+        dataset_dir="../hf_old_datasets",
+        aligned_files_dir="../epochs_eeg_aligned",
+    )
+
+    erp, sb = average_over_subjects_with_info(eeg_all_sentences)
+
+    print(erp.shape)
+    print(sb)
+
+    import os
+    os.makedirs("../erp", exist_ok=True)
+    np.save("../erp/erp_data.npy", erp)
