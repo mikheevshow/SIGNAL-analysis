@@ -119,3 +119,26 @@ def get_eeg_for_all_sentences(
     all_data = np.stack(arrs, axis=0)
 
     return all_data
+
+
+def average_over_subjects_with_info(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+
+    """
+    Усредняет данные ЭЭГ по испытуемым и возвращает дополнительную информацию.
+
+    Parameters:
+    -----------
+    data : np.ndarray
+        Массив данных размерности: испытуемые x предложения x каналы x временные_точки
+
+    Returns:
+    --------
+    tuple[np.ndarray, np.ndarray]
+        - erp_data: усредненный массив ERP размерности: предложения x каналы x временные_точки
+        - subject_counts: количество испытуемых для каждого предложения (размерность: предложения)
+    """
+
+    subject_counts = np.sum(~np.isnan(data).all(axis=(2, 3)), axis=0)
+    erp_data = np.nanmean(data, axis=0)
+
+    return erp_data, subject_counts
