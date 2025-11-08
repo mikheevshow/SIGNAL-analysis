@@ -31,6 +31,7 @@ def get_times_from_eeg_data(eeg_data: np.ndarray,
     duration = n_times / sfreq
     tmax = tmin + duration
     times = np.linspace(tmin, tmax, n_times, endpoint=False)
+
     return times
 
 def windowed_rsa(
@@ -41,14 +42,16 @@ def windowed_rsa(
         sfreq: int = 1_000,
         tmin: float = -0.4,
         method: str = "spearman",
+        compute_permutations: bool = False,
         n_permutations: int = 5_000,
 ):
+
+    if eeg_data.shape[0] != neural_representations.shape[0]:
+        raise RuntimeError(f"Stimuli's dimensions do not match")
 
     n_times = eeg_data.shape[2]
     times = get_times_from_eeg_data(eeg_data, sfreq=sfreq, tmin=tmin)
 
-    # Вернуть потом
-    # neural_norm = zscore(neural_representations, axis=0, ddof=1)
     neural_condensed = pdist(neural_representations, metric="cosine")
     neural_rdm = squareform(neural_condensed)
 
@@ -79,39 +82,42 @@ def windowed_rsa(
 
         # Перестановочный тест
 
-        perm_correlations = []
+        if compute_permutations:
 
-        for permutation in range(n_permutations):
-            n_sentences = eeg_data.shape[0]
-            shuffled_indices = np.random.permutation(n_sentences)
+            perm_correlations = []
 
-            eeg_shuffled = eeg_window[shuffled_indices]
-            eeg_shuffled_condensed = pdist(eeg_shuffled, metric="cosine")
-            eeg_shuffled_rdm = squareform(eeg_shuffled_condensed)
+            for permutation in range(n_permutations):
+                n_sentences = eeg_data.shape[0]
+                shuffled_indices = np.random.permutation(n_sentences)
 
-            shuffled_triu_indices = np.triu_indices_from(eeg_shuffled_rdm, k=1)
-            eeg_shuffled_triu = eeg_shuffled_rdm[shuffled_triu_indices]
+                eeg_shuffled = eeg_window[shuffled_indices]
+                eeg_shuffled_condensed = pdist(eeg_shuffled, metric="cosine")
+                eeg_shuffled_rdm = squareform(eeg_shuffled_condensed)
 
-            if method == "spearman":
-                shuffled_corr, _ = spearmanr(eeg_shuffled_triu, neural_triu)
-            elif method == "pearson":
-                shuffled_corr, _ = pearsonr(eeg_shuffled_triu, neural_triu)
-            else:
-                raise RuntimeError(f"Method {method} not supported")
-            perm_correlations.append(shuffled_corr)
+                shuffled_triu_indices = np.triu_indices_from(eeg_shuffled_rdm, k=1)
+                eeg_shuffled_triu = eeg_shuffled_rdm[shuffled_triu_indices]
 
-        perm_correlations = np.array(perm_correlations)
-        p_value = np.mean(np.abs(perm_correlations) >= np.abs(correlation))
+                if method == "spearman":
+                    shuffled_corr, _ = spearmanr(eeg_shuffled_triu, neural_triu)
+                elif method == "pearson":
+                    shuffled_corr, _ = pearsonr(eeg_shuffled_triu, neural_triu)
+                else:
+                    raise RuntimeError(f"Method {method} not supported")
+                perm_correlations.append(shuffled_corr)
+
+            perm_correlations = np.array(perm_correlations)
+            p_value = np.mean(np.abs(perm_correlations) >= np.abs(correlation))
+            window_perm_distributions.append(perm_correlations)
 
         window_correlations.append(correlation)
         window_p_values.append(p_value)
         window_centers.append(window_center)
-        window_perm_distributions.append(perm_correlations)
 
     return {
-        'correlations': np.array(window_correlations),
-        'p_values': np.array(window_p_values),
-        'window_centers': np.array(window_centers)
+        'correlations': np.array(window_correlations).tolist(),
+        'p_values': np.array(window_p_values).tolist(),
+        'window_centers': np.array(window_centers).tolist(),
+        'window_perm_distributions': np.array(window_perm_distributions).tolist()
     }
 
 
