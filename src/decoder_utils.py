@@ -6,9 +6,11 @@ from typing import List, Literal
 
 import numpy as np
 import torch
+from transformers import PreTrainedTokenizerFast
+import numpy as np
 from datasets import load_dataset
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, PreTrainedTokenizerFast, AutoTokenizer
 
 from text_utils import find_index_of_incongruent_word
 from tokenizer_utils import load_tokenizer, tokenize
@@ -59,12 +61,14 @@ def _extract_word_hidden_states(
 
         # [batch, layers, tokens, dim] -> [batch, tokens, layers, dim]
         hidden_states = torch.stack(output.hidden_states, dim=1).permute(0, 2, 1, 3)
+        logits = output.logits  # shape: [batch, seq_len, vocab_size]
 
-        for text, hs, offsets in zip(batch, hidden_states, encoded_tokens["offset_mapping"]):
+        for text, hs, offsets in zip(batch, hidden_states, logits, encoded_tokens["offset_mapping"]):
             results.append({
                 "text": text,
                 "hidden_states": hs.cpu().detach(),
                 "offset_mapping": offsets,
+                "logits": logits.cpu().detach(),
             })
 
         logger.info(f"Processed batch {batch_start // batch_size + 1}/{(len(texts) - 1)//batch_size + 1}")
@@ -72,44 +76,6 @@ def _extract_word_hidden_states(
     return results
 
 
-
-def calculate_aggregated_hidden_states(
-    congruent_sentences: list[str],
-    incongruent_sentences: list[str],
-    model_name: str = "openai-community/gpt2",
-    device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    aggregation_method: AggT = "mean",
-) -> list:
-
-    indices_of_incongruent_word = find_index_of_incongruent_word(congruent_sentences=congruent_sentences,
-                                                                 incongruent_sentences=incongruent_sentences)
-
-    logger.info(indices_of_incongruent_word)
-
-    outputs = _extract_word_hidden_states(texts=incongruent_sentences,
-                                          model_name=model_name,
-                                          device=device)
-
-    for output, incongruent_word_start_end in zip(outputs, indices_of_incongruent_word):
-
-        output["incongruent_word_start_end_indices"] = incongruent_word_start_end
-
-        offset_mapping = output["offset_mapping"]
-
-        incongruent_words_embedding_indices = []
-        for i, om in enumerate(offset_mapping):
-            if om[0] >= incongruent_word_start_end[0] and om[1] <= incongruent_word_start_end[1]:
-                incongruent_words_embedding_indices.append(i)
-
-        sentence_hidden_states = output["hidden_states"]
-        incongruent_word_hidden_states = sentence_hidden_states[incongruent_words_embedding_indices]
-
-        if aggregation_method == "mean":
-            output["aggregated_word_embedding_by_layer"] = incongruent_word_hidden_states.mean(dim=0)
-        else:
-            raise NotImplementedError(f"Aggregation method {aggregation_method} not implemented")
-
-    return outputs
 
 
 
@@ -167,16 +133,20 @@ def calculate_hidden_states_all_tokens(
             )
 
         hidden_states = torch.stack(output.hidden_states, dim=1).permute(0, 2, 1, 3)
+        logits = output.logits
 
-        for idx, (text, hs) in enumerate(zip(batch, hidden_states)):
+        for idx, (text, hs, lg) in enumerate(zip(batch, hidden_states, logits)):
             sentence_idx = len(processed_texts) + batch_start + idx
             base_name = f"{sentence_idx:05d}_{model_config.model_name_or_path.replace('/', '_')}.npy"
             hs_path = os.path.join(save_dir, base_name)
+            lg_path = os.path.join(save_dir, base_name + "_logits.npy")
             np.save(hs_path, hs.cpu().numpy())
+            np.save(lg_path, lg.cpu().numpy())
+
 
             with open(csv_path, "a", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow([text, model_config.model_name_or_path, model_config.instruct, hs_path])
+                writer.writerow([text, model_config.model_name_or_path, model_config.instruct, hs_path, lg_path])
 
         logger.info(f"Batch processed {batch_start // batch_size + 1} "
                     f"of {(len(remaining_sentences) - 1) // batch_size + 1}")
@@ -185,20 +155,21 @@ def calculate_hidden_states_all_tokens(
     return csv_path
 
 
-if __name__ == "__main__":
 
-    aggregate_tokens = False
+
+if __name__ == "__main__":
 
     model_list = [
         # ModelConfig(model_name_or_path="RefalMachine/RuadaptQwen3-4B-Instruct", instruct=True),
         # ModelConfig(model_name_or_path="Qwen/Qwen3-4B-Instruct-2507", instruct=True),
         # ModelConfig(model_name_or_path="RefalMachine/RuadaptQwen2.5-14B-Instruct", instruct=True),
         # ModelConfig(model_name_or_path="meta-llama/Meta-Llama-3-8B", instruct=False),
-        # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B", instruct=False),
+        ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B", instruct=False),
         # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B-Instruct", instruct=True),
         # ModelConfig(model_name_or_path="RefalMachine/ruadapt_qwen2.5_7B_ext_u48_instruct", instruct=True),
         # ModelConfig(model_name_or_path="mistralai/Mistral-7B-v0.1", instruct=False),
         # ModelConfig(model_name_or_path="mistralai/Mistral-7B-Instruct-v0.1", instruct=True),
+        # ModelConfig(model_name_or_path="ai-sage/GigaChat3-10B-A1.8B-base", instruct=False),
     ]
 
     ds = load_dataset("ContributorsSIGNAL/SIGNAL")
@@ -212,7 +183,8 @@ if __name__ == "__main__":
     for model_cfg in tqdm(model_list, desc="Model"):
 
         tokenizer = load_tokenizer(model_cfg.model_name_or_path)
-        model = AutoModelForCausalLM.from_pretrained(model_cfg.model_name_or_path, output_hidden_states=True)
+        logger.info(f"Processing {model_cfg.model_name_or_path}")
+        model = AutoModelForCausalLM.from_pretrained(model_cfg.model_name_or_path)
         model.eval().to("cpu")
 
         calculate_hidden_states_all_tokens(
