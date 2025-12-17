@@ -112,7 +112,8 @@ def make_word_level_probing_dataset(
     for i, row in merged_df.iterrows():
 
         hidden_states_path = row["hidden_states_path"]
-        hidden_states = np.load(os.path.abspath(os.path.join(str(model_hiddens_path.parent.parent), hidden_states_path.split(".npy")[0] + "_word_level_hidden_states.npy"))) # hidden shape [layers, emb_dim]
+
+        hidden_states = np.load(os.path.abspath(os.path.join(str(model_hiddens_path.parent.parent), hidden_states_path.split(".npy")[0] + "_max_surprisal_hidden_states.npy"))) # hidden shape [layers, emb_dim]
 
         for layer_idx, layer_hidden in enumerate(hidden_states):
             for col in columns_to_select:

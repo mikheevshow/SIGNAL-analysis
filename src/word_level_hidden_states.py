@@ -1,8 +1,8 @@
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 import pandas as pd
-from mpmath.libmp import mpi_delta
 
 from tqdm import tqdm
 from src.tokenizer_utils import tokenize, load_tokenizer
@@ -13,11 +13,21 @@ class ModelConfig:
     model_name_or_path: str
     instruct: bool
 
+def compute_surprisal(logits, token_ids):
+    shifted = logits - np.max(logits, axis=1, keepdims=True)
+    exp = np.exp(shifted)
+    probs = exp / np.sum(exp, axis=1, keepdims=True)
+    token_probs = probs[np.arange(len(token_ids)), token_ids]
+    surprisal = -np.log2(token_probs)
+    return surprisal[0]
+
+
 def word_level_hidden_state(sentence_hidden_states: np.ndarray,
                             sentence: str,
                             word_position: int,
                             tokenizer: PreTrainedTokenizerFast,
-                            strategy: str = "avg") -> np.ndarray:
+                            strategy: Literal["avg", "max_surprisal"] = "avg",
+                            logits: np.ndarray = None) -> tuple[np.ndarray, dict]:
 
     tokenizer_output = tokenize(
         tokenizer=tokenizer,
@@ -49,10 +59,26 @@ def word_level_hidden_state(sentence_hidden_states: np.ndarray,
                 else:
                     break
 
+    final_embedding = None
+    word_info = {
+        "max_surprisal_relative_index": -1,
+        "word_length_tokens": len(offset_mapping_indices),
+    }
+
     if strategy == "avg":
-        return sentence_hidden_states[offset_mapping_indices, :, :].mean(axis=0)
+        final_embedding = (sentence_hidden_states[offset_mapping_indices, :, :].mean(axis=0) - sentence_hidden_states[[min(offset_mapping_indices) - 1], :, :])[0]
+    elif strategy == "max_surprisal":
+        if logits is None:
+            raise RuntimeError("Logits cannot be None when strategy=max_surprisal")
+        surprisal = compute_surprisal(logits=logits, token_ids=tokenizer_output["input_ids"])
+        local_argmax = np.argmax(surprisal[offset_mapping_indices])
+        word_info["max_surprisal_relative_index"] = local_argmax
+        max_surprisal_index = offset_mapping_indices[local_argmax]
+        final_embedding = sentence_hidden_states[max_surprisal_index, :, :]
     else:
         raise ValueError("Strategy not implemented")
+
+    return final_embedding, word_info
 
 if __name__ == "__main__":
 
@@ -66,13 +92,15 @@ if __name__ == "__main__":
         # ModelConfig(model_name_or_path="RefalMachine/ruadapt_qwen2.5_7B_ext_u48_instruct", instruct=True),
         # ModelConfig(model_name_or_path="mistralai/Mistral-7B-v0.1", instruct=False),
         # ModelConfig(model_name_or_path="mistralai/Mistral-7B-Instruct-v0.1", instruct=True),
-        # ModelConfig(model_name_or_path="ai-sage/GigaChat3-10B-A1.8B-base", instruct=False),
+        ModelConfig(model_name_or_path="ai-sage/GigaChat3-10B-A1.8B-base", instruct=False),
     ]
 
     stimuli_path = "../hf_datasets/stimuli.csv"
     stimuli_df = pd.read_csv(stimuli_path)
 
     for model_cfg in model_list:
+
+        strategy = "max_surprisal"
 
         tokenizer = load_tokenizer(model_cfg.model_name_or_path)
 
@@ -83,10 +111,22 @@ if __name__ == "__main__":
 
         df = df.merge(stimuli_df, how="left", on="sentence")
 
+        words_info = {
+            "max_surprisal_relative_index": [],
+            "word_length_tokens": [],
+            "target": []
+        }
+
         for i, row in tqdm(df.iterrows()):
 
             hidden_states_path = row["hidden_states_path"]
             hidden_states = np.load(hidden_states_path)
+
+            if strategy == "max_surprisal":
+                logits_path = row["logits"]
+                logits = np.load(logits_path)
+            else:
+                logits = None
 
             print("Hidden state shape: ", hidden_states.shape)
 
@@ -96,15 +136,25 @@ if __name__ == "__main__":
             print(sentence)
             print(word_position)
 
-            aggregated_word_level_hidden_states = word_level_hidden_state(
+            aggregated_word_level_hidden_states, word_info = word_level_hidden_state(
                 sentence_hidden_states=hidden_states,
                 sentence=sentence,
                 word_position=word_position,
                 tokenizer=tokenizer,
+                strategy=strategy,
+                logits=logits,
             )
 
-            print(aggregated_word_level_hidden_states.shape)
+            # print(aggregated_word_level_hidden_states.shape)
 
-            word_level_path = hidden_states_path.split(".npy")[0] + "_word_level_hidden_states.npy"
-            np.save(word_level_path, aggregated_word_level_hidden_states)
+            # if strategy == "max_surprisal":
+            #     word_level_path = hidden_states_path.split(".npy")[0] + "_max_surprisal_hidden_states.npy"
+            # else:
+            #     word_level_path = hidden_states_path.split(".npy")[0] + "_word_level_hidden_states.npy"
+            # np.save(word_level_path, aggregated_word_level_hidden_states)
 
+            words_info["max_surprisal_relative_index"].append(word_info["max_surprisal_relative_index"])
+            words_info["word_length_tokens"].append(word_info["word_length_tokens"])
+            words_info["target"].append(row["target"])
+
+        pd.DataFrame(words_info).to_csv(f"./tokens_{model_cfg.model_name_or_path.replace('/', '_')}.csv", index=False)
