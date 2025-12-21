@@ -66,7 +66,7 @@ def word_level_hidden_state(sentence_hidden_states: np.ndarray,
     }
 
     if strategy == "avg":
-        final_embedding = (sentence_hidden_states[offset_mapping_indices, :, :].mean(axis=0) - sentence_hidden_states[[min(offset_mapping_indices) - 1], :, :])[0]
+        final_embedding = sentence_hidden_states[offset_mapping_indices, :, :].mean(axis=0)
     elif strategy == "max_surprisal":
         if logits is None:
             raise RuntimeError("Logits cannot be None when strategy=max_surprisal")
