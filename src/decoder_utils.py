@@ -6,13 +6,10 @@ from typing import List, Literal
 
 import numpy as np
 import torch
-from transformers import PreTrainedTokenizerFast
-import numpy as np
 from datasets import load_dataset
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, PreTrainedTokenizerFast, AutoTokenizer
+from transformers import AutoModelForCausalLM
 
-from text_utils import find_index_of_incongruent_word
 from tokenizer_utils import load_tokenizer, tokenize
 
 logger = logging.getLogger(__name__)
@@ -160,16 +157,20 @@ def calculate_hidden_states_all_tokens(
 if __name__ == "__main__":
 
     model_list = [
+        # ModelConfig(model_name_or_path="ai-sage/GigaChat3-10B-A1.8B-base", instruct=False),
+        # ModelConfig(model_name_or_path="google/gemma-3-12b-pt", instruct=False),
+        # ModelConfig(model_name_or_path="Qwen/Qwen3-8B", instruct=False),
+        # ModelConfig(model_name_or_path="meta-llama/Meta-Llama-3-8B", instruct=False),
+        ModelConfig(model_name_or_path="AvitoTech/avibe", instruct=True),
+
         # ModelConfig(model_name_or_path="RefalMachine/RuadaptQwen3-4B-Instruct", instruct=True),
         # ModelConfig(model_name_or_path="Qwen/Qwen3-4B-Instruct-2507", instruct=True),
         # ModelConfig(model_name_or_path="RefalMachine/RuadaptQwen2.5-14B-Instruct", instruct=True),
-        # ModelConfig(model_name_or_path="meta-llama/Meta-Llama-3-8B", instruct=False),
-        ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B", instruct=False),
+        # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B", instruct=False),
         # ModelConfig(model_name_or_path="Qwen/Qwen2.5-7B-Instruct", instruct=True),
         # ModelConfig(model_name_or_path="RefalMachine/ruadapt_qwen2.5_7B_ext_u48_instruct", instruct=True),
         # ModelConfig(model_name_or_path="mistralai/Mistral-7B-v0.1", instruct=False),
         # ModelConfig(model_name_or_path="mistralai/Mistral-7B-Instruct-v0.1", instruct=True),
-        # ModelConfig(model_name_or_path="ai-sage/GigaChat3-10B-A1.8B-base", instruct=False),
     ]
 
     ds = load_dataset("ContributorsSIGNAL/SIGNAL")

@@ -5,6 +5,7 @@ import numpy as np
 
 from pathlib import Path
 from src.tokenizer_utils import load_tokenizer, tokenize
+from src.word_level_hidden_states import word_level_hidden_state
 
 # Index(['sentence', 'model', 'instruct', 'hidden_states_path', 'logits',
 #        'sentence_id', 'congruent', 'structure', 'length', 'target', 'position',
@@ -103,19 +104,22 @@ def make_word_level_probing_dataset(
     result = {**result, **{"layer": [], "hidden_state": []}}
     tokenizer = load_tokenizer(model_name)
 
-    tokenized_sentences = tokenize(
-        tokenizer=tokenizer,
-        sentences=merged_df["sentence"].tolist(),
-        use_chat_template=instruct,
-    )
-
     for i, row in merged_df.iterrows():
 
         hidden_states_path = row["hidden_states_path"]
 
-        hidden_states = np.load(os.path.abspath(os.path.join(str(model_hiddens_path.parent.parent), hidden_states_path.split(".npy")[0] + "_max_surprisal_hidden_states.npy"))) # hidden shape [layers, emb_dim]
+        hidden_states = np.load(os.path.abspath(os.path.join(str(model_hiddens_path.parent.parent), hidden_states_path))) # hidden shape [layers, emb_dim]
 
-        for layer_idx, layer_hidden in enumerate(hidden_states):
+        embeddings, _ = word_level_hidden_state(
+            sentence_hidden_states=hidden_states,
+            sentence=row["sentence"],
+            word_position=int(row["position"]),
+            tokenizer=tokenizer,
+        )
+
+        print(embeddings.shape)
+
+        for layer_idx, layer_hidden in enumerate(embeddings):
             for col in columns_to_select:
                 result[col].append(row[col])
             result["layer"].append(layer_idx)

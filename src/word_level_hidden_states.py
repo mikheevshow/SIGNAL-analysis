@@ -27,7 +27,8 @@ def word_level_hidden_state(sentence_hidden_states: np.ndarray,
                             word_position: int,
                             tokenizer: PreTrainedTokenizerFast,
                             strategy: Literal["avg", "max_surprisal"] = "avg",
-                            logits: np.ndarray = None) -> tuple[np.ndarray, dict]:
+                            logits: np.ndarray = None,
+                            verbose: bool = False) -> tuple[np.ndarray, dict]:
 
     tokenizer_output = tokenize(
         tokenizer=tokenizer,
@@ -43,10 +44,11 @@ def word_level_hidden_state(sentence_hidden_states: np.ndarray,
 
     for i, offset_mappings in enumerate(offset_mappings):
         if offset_mappings[0] == offset_mappings[1] and offset_mappings[0] == 0:
-            if i == 0:
-                print("Skipp heading service token")
-            else:
-                print("Skipp trailing service token")
+            if verbose:
+                if i == 0:
+                    print("Skipp heading service token")
+                else:
+                    print("Skipp trailing service token")
             continue
         if offset_mappings[0] >= word_index - 1:
             if word_position == len(words) - 1:
@@ -59,7 +61,6 @@ def word_level_hidden_state(sentence_hidden_states: np.ndarray,
                 else:
                     break
 
-    final_embedding = None
     word_info = {
         "max_surprisal_relative_index": -1,
         "word_length_tokens": len(offset_mapping_indices),
